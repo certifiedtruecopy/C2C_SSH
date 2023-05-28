@@ -9,6 +9,8 @@ Download for Windows
 Connect to the server
 
 User creation
+Delete User
+Change a user's password
 
 Traffic restrictions
 
