@@ -60,15 +60,15 @@ def create_user():
     new_username = simpledialog.askstring("New User", "Please enter the new username:")
     new_password = simpledialog.askstring("New User", "Please enter the new password:")
     traffic_limit_gb = simpledialog.askinteger("New User", "Please enter the traffic limit in GB:")
-    traffic_limit = traffic_limit_gb * 1024 # Convert GB to MB
+    traffic_limit = traffic_limit_gb * 1024  # Convert GB to MB
     validity_days = simpledialog.askinteger("New User", "Please enter the validity period in days:")
 
     # Create the new user
-    stdin, stdout, stderr = ssh.exec_command(f'sudo adduser {new_username} --gecos "" --disabled-password')
+    stdin, stdout, stderr = ssh.exec_command(f'sudo useradd -m {new_username}')
     output = stdout.read().decode()
     info_text.insert(tk.END, output)
 
-    # Set the new user's password
+    # Set the password for the new user
     stdin, stdout, stderr = ssh.exec_command(f'echo "{new_username}:{new_password}" | sudo chpasswd')
     output = stdout.read().decode()
     info_text.insert(tk.END, output)
@@ -84,7 +84,51 @@ def create_user():
     info_text.insert(tk.END, output)
 
     # Set the validity period for the new user
-    stdin, stdout, stderr = ssh.exec_command(f'sudo chage -E $(date -d "+{validity_days} days" +%Y-%m-%d) {new_username}')
+    stdin, stdout, stderr = ssh.exec_command(
+        f'sudo chage -E $(date -d "+{validity_days} days" +%Y-%m-%d) {new_username}')
+    output = stdout.read().decode()
+    info_text.insert(tk.END, output)
+
+    # Close the connection
+    ssh.close()
+
+def delete_user():
+    # Retrieve the user's input
+    server_ip = ip_entry.get()
+    server_port = int(port_entry.get())
+    username = username_entry.get()
+    password = password_entry.get()
+
+    # Connect to the server
+    ssh.connect(server_ip, port=server_port, username=username, password=password)
+
+    # Ask the user for the username to delete
+    username_to_delete = simpledialog.askstring("Delete User", "Please enter the username to delete:")
+
+    # Delete the user
+    stdin, stdout, stderr = ssh.exec_command(f'sudo userdel {username_to_delete}')
+    output = stdout.read().decode()
+    info_text.insert(tk.END, output)
+
+    # Close the connection
+    ssh.close()
+
+def change_password():
+    # Retrieve the user's input
+    server_ip = ip_entry.get()
+    server_port = int(port_entry.get())
+    username = username_entry.get()
+    password = password_entry.get()
+
+    # Connect to the server
+    ssh.connect(server_ip, port=server_port, username=username, password=password)
+
+    # Ask the user for the username and new password
+    username_to_change = simpledialog.askstring("Change Password", "Please enter the username to change password:")
+    new_password = simpledialog.askstring("Change Password", "Please enter the new password:")
+
+    # Change the password
+    stdin, stdout, stderr = ssh.exec_command(f'echo "{username_to_change}:{new_password}" | sudo chpasswd')
     output = stdout.read().decode()
     info_text.insert(tk.END, output)
 
@@ -119,8 +163,9 @@ def upload_and_extract():
     # Connect to the server
     ssh.connect(server_ip, port=server_port, username=username, password=password)
 
-    # Select the ZIP file to upload
-    file_path = filedialog.askopenfilename()
+    # Ask the user to select a ZIP file for upload
+    file_path = filedialog.askopenfilename(filetypes=[("ZIP Files", "*.zip")])
+
     if not file_path:
         return
 
@@ -160,79 +205,143 @@ def get_user_list():
     # Connect to the server
     ssh.connect(server_ip, port=server_port, username=username, password=password)
 
+    # Clear the existing table
+    user_table.delete(*user_table.get_children())
+
     # Get the list of users
     stdin, stdout, stderr = ssh.exec_command('awk -F: \'{ print $1}\' /etc/passwd')
     user_list = stdout.read().decode().split('\n')
 
-    # Update the user list in the text box
-    info_text.insert(tk.END, '\n'.join(user_list))
+    for user in user_list:
+        if user:
+            # Get the user's information
+            stdin, stdout, stderr = ssh.exec_command(f'sudo chage -l {user}')
+            chage_output = stdout.read().decode()
+
+            # Parse the user's information
+            created_date = ""
+            validity_days = ""
+            traffic_limit = ""
+            traffic_usage = ""
+            is_connected = "No"
+
+            lines = chage_output.split('\n')
+            for line in lines:
+                if "Last password change" in line:
+                    created_date = line.split(":")[1].strip()
+                elif "Account expires" in line:
+                    validity_days = line.split(":")[1].strip()
+                elif "Max" in line and "blocks" in line:
+                    traffic_limit = line.split(":")[1].strip()
+                elif "Current blocks" in line:
+                    traffic_usage = line.split(":")[1].strip()
+
+            # Check if the user is connected
+            stdin, stdout, stderr = ssh.exec_command(f'who | grep -w {user}')
+            who_output = stdout.read().decode()
+            if who_output:
+                is_connected = "Yes"
+
+            # Insert the user's information into the table
+            user_table.insert("", tk.END, text=user, values=(created_date, validity_days, traffic_limit,
+                                                             traffic_usage, is_connected))
 
     # Close the connection
     ssh.close()
 
 # Create a Tkinter window
 root = tk.Tk()
-root.geometry("505x940") # Set the size of the window
-root.title("C2C_SSH") # Set the title of the window
+root.geometry("1345x580")  # Set the size of the window
+root.title("C2C_SSH")  # Set the title of the window
 
-# Apply the Pulse style from ttkbootstrap
-style = Style(theme='pulse')
-
-# Create a frame to hold the IP image label
-image_frame = tk.Frame(root)
-image_frame.pack(side=tk.TOP, pady=10)
-
-# Load and display the image
-image = Image.open("icon.png")
-image = image.resize((200, 200), Image.ANTIALIAS)
-image = ImageTk.PhotoImage(image)
-image_label = tk.Label(image_frame, image=image)
-image_label.pack()
+# Create the top-left frame for server details
+top_left_frame = ttk.Frame(root)
+top_left_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
 # Create input fields for the server's details
-ip_label = ttk.Label(root, text="Server IP:")
-ip_label.pack()
-ip_entry = ttk.Entry(root)
-ip_entry.pack()
+ip_label = ttk.Label(top_left_frame, text="Server IP:")
+ip_label.grid(row=0, column=0, sticky="w")
+ip_entry = ttk.Entry(top_left_frame)
+ip_entry.grid(row=0, column=1, padx=5)
 
-port_label = ttk.Label(root, text="Server Port:")
-port_label.pack()
-port_entry = ttk.Entry(root)
-port_entry.pack()
+port_label = ttk.Label(top_left_frame, text="Server Port:")
+port_label.grid(row=1, column=0, sticky="w")
+port_entry = ttk.Entry(top_left_frame)
+port_entry.grid(row=1, column=1, padx=5)
 
-username_label = ttk.Label(root, text="Username:")
-username_label.pack()
-username_entry = ttk.Entry(root)
-username_entry.pack()
+username_label = ttk.Label(top_left_frame, text="Username:")
+username_label.grid(row=2, column=0, sticky="w")
+username_entry = ttk.Entry(top_left_frame)
+username_entry.grid(row=2, column=1, padx=5)
 
-password_label = ttk.Label(root, text="Password:")
-password_label.pack()
-password_entry = ttk.Entry(root, show="*")
-password_entry.pack()
+password_label = ttk.Label(top_left_frame, text="Password:")
+password_label.grid(row=3, column=0, sticky="w")
+password_entry = ttk.Entry(top_left_frame, show="*")
+password_entry.grid(row=3, column=1, padx=5)
 
 # Create a button to initiate the connection
-button = ttk.Button(root, text="Connect to server", command=connect_to_server, width=20)
-button.pack()
+button = ttk.Button(top_left_frame, text="Connect to server", command=connect_to_server, width=20)
+button.grid(row=4, column=0, columnspan=2, pady=10)
 
-# Create a button to create the new user
-new_user_button = ttk.Button(root, text="Create new user", command=create_user, width=20)
-new_user_button.pack()
+# Create the top-right frame for buttons
+top_right_frame = ttk.Frame(root)
+top_right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+
+# Create a button to create a new user
+new_user_button = ttk.Button(top_right_frame, text="Create new user", command=create_user, width=20)
+new_user_button.grid(row=0, column=0, padx=5, pady=5)
+
+# Create a button to delete a user
+delete_user_button = ttk.Button(top_right_frame, text="Delete user", command=delete_user, width=20)
+delete_user_button.grid(row=1, column=0, padx=5, pady=5)
+
+# Create a button to change a user's password
+change_password_button = ttk.Button(top_right_frame, text="Change password", command=change_password, width=20)
+change_password_button.grid(row=2, column=0, padx=5, pady=5)
 
 # Create a button to get the list of users
-user_list_button = ttk.Button(root, text="Get user list", command=get_user_list, width=20)
-user_list_button.pack()
+user_list_button = ttk.Button(top_right_frame, text="Get user list", command=get_user_list, width=20)
+user_list_button.grid(row=3, column=0, padx=5, pady=5)
 
 # Create a button to install Nginx
-nginx_button = ttk.Button(root, text="Install Nginx", command=install_nginx, width=20)
-nginx_button.pack()
+nginx_button = ttk.Button(top_right_frame, text="Install Nginx", command=install_nginx, width=20)
+nginx_button.grid(row=0, column=1, padx=5, pady=5)
 
 # Create a button to upload and extract the ZIP file
-upload_button = ttk.Button(root, text="Upload Web Site", command=upload_and_extract, width=20)
-upload_button.pack()
+upload_button = ttk.Button(top_right_frame, text="Upload Web Site", command=upload_and_extract, width=20)
+upload_button.grid(row=1, column=1, padx=5, pady=5)
 
-# Create a text box to display the info
-info_text = tk.Text(root)
+# Create the bottom-left frame for server information
+bottom_left_frame = ttk.Frame(root)
+bottom_left_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+
+# Create a text box to display the server information
+info_text = tk.Text(bottom_left_frame)
 info_text.pack()
+
+# Create the bottom-right frame for the user table
+bottom_right_frame = ttk.Frame(root)
+bottom_right_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
+
+# Create a treeview to display the user information
+user_table = ttk.Treeview(bottom_right_frame)
+user_table["columns"] = ("created_date", "validity_days", "traffic_limit", "traffic_usage", "is_connected")
+
+user_table.column("#0", width=100)
+user_table.column("created_date", width=150)
+user_table.column("validity_days", width=150)
+user_table.column("traffic_limit", width=150)
+user_table.column("traffic_usage", width=150)
+user_table.column("is_connected", width=100)
+
+user_table.heading("#0", text="Username")
+user_table.heading("created_date", text="Created Date")
+user_table.heading("validity_days", text="Validity Days")
+user_table.heading("traffic_limit", text="Traffic Limit (GB)")
+user_table.heading("traffic_usage", text="Traffic Usage (MB)")
+user_table.heading("is_connected", text="Connected")
+
+user_table.pack()
 
 # Start the Tkinter event loop
 root.mainloop()
