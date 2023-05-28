@@ -1,8 +1,14 @@
+
+![Logo](https://avatars.githubusercontent.com/u/117518627?v=4)
+
+
+
+
 # C2C_SSH
-# A program for creating and managing SSH tunnel users
+
+A program for creating and managing SSH tunnel users
 
 ## Capabilities
-
 
 * Download for Windows
 * Connect to the server
@@ -14,7 +20,29 @@
 * View the list of users
 * Install Nginx
 * Installing the website template
+* and more
 
 
-"As a developer, I have created this program to be completely free for everyone. My aim is to provide easy access to the open internet. I warmly invite all developers to contribute to this cause and help advance this application. I strongly believe in the power of collective effort, and with your support, we can uphold and promote unrestricted internet access. Your participation can make a genuine difference in this project. Let's work together to enhance this platform and advocate for free, open access to the internet for all."
+## Run 
 
+Download Program for windows
+
+* https://twitter.com/certified2rue
+
+
+
+
+## Tech Stack
+
+**Client:** NapsternetV
+
+**Server:** Ubuntu
+
+
+## 🔗 Links
+### Youtube
+* https://www.youtube.com/@CertifiedTrueCopy
+### Telegram
+* https://t.me/problem_of_Internet_access
+### Twitter
+* https://twitter.com/certified2rue
