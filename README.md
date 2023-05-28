@@ -27,7 +27,7 @@ A program for creating and managing SSH tunnel users
 
 Download Program for windows
 
-* https://twitter.com/certified2rue
+* https://github.com/certifiedtruecopy/C2C_SSH/releases
 
 
 
