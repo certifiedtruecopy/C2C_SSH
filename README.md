@@ -20,6 +20,12 @@ A program for creating and managing SSH tunnel users
 * View the list of users
 * Install Nginx
 * Installing the website template
+* install Certbot with one click.
+* Added the ability to obtain SSL certificates.
+* Display the creation and expiration date of a user.
+* Test server speed.
+* Block domains.
+* Access the server using a domain.
 * and more
 
 
