@@ -16,6 +16,7 @@ A program for creating and managing SSH tunnel users
 * Delete User
 * Change a user's password
 * Traffic restrictions
+* Added the ability to tunnel between two servers.
 * Set a date limit for the user
 * View the list of users
 * Install Nginx
