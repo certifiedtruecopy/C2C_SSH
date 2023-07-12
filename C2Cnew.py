@@ -276,12 +276,50 @@ def tunnel_setup(client, log_text):
     log_text.insert('end', 'Tunnel setup successful\n')
 
 
+def setup_udpgw(client, log_text):
+    # Ask the user for the UDPGW port
+    udpgw_port = simpledialog.askinteger("UDPGW", "Please enter the UDPGW port:")
+
+    # Download the file
+    command = 'wget -O /usr/bin/badvpn-udpgw "https://raw.githubusercontent.com/daybreakersx/premscript/master/badvpn-udpgw64"'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if "Saving to" not in errors:  # Check if a real error occurred
+        log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+        return
+
+    # Wait for the file to download
+    time.sleep(8)
+
+    # Create and edit the rc.local file
+    rc_local_commands = [
+        f"#!/bin/sh -e",
+        f"screen -AmdS badvpn badvpn-udpgw --listen-addr 127.0.0.1:{udpgw_port}",
+        f"exit 0",
+    ]
+    for command in rc_local_commands:
+        stdin, stdout, stderr = client.exec_command(f'sudo bash -c "echo \'{command}\' >> /etc/rc.local"')
+        errors = stderr.read().decode()
+        if errors:
+            log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+            return
+
+    # Run the final command
+    command = f"sudo chmod +x /etc/rc.local && sudo chmod +x /usr/bin/badvpn-udpgw && systemctl daemon-reload && sleep 0.5 && systemctl start rc-local.service && screen -AmdS badvpn badvpn-udpgw --listen-addr 127.0.0.1:{udpgw_port}"
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+        return
+
+    log_text.insert('end', 'UDPGW setup successful\n')
+
 
 
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_ 1.07.11")
+    root.title("C2C SSH V_1.07.12")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
@@ -400,8 +438,9 @@ def main():
 
             tunnel_setup_button = ttk.Button(tab, text='Tunnel Setup', width=20, command=lambda: tunnel_setup(client, log_text))
             tunnel_setup_button.grid(row=i+1, column=0, padx=5, pady=5, sticky='w')
-
-
+            udpgw_button = ttk.Button(tab, text='UDPGW', width=20, command=lambda: setup_udpgw(client, log_text))
+            udpgw_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        
         elif name == 'Install Panel':
             for i, btn_name in enumerate(buttons_in_install_panel_column1):
                 button = ttk.Button(tab, text=btn_name, width=20) 
