@@ -9,8 +9,7 @@ import time
 import psutil
 from tkinter import simpledialog
 from tkinter import messagebox
-
-
+from tkinter import filedialog
 
 def connect_to_server(ip_domain, port, username, password, log_text):
     # Create a new SSH client
@@ -229,26 +228,19 @@ def tunnel_setup(client, log_text):
     iranip = simpledialog.askstring("Input", "Enter Iran IP:")
     kharegip = simpledialog.askstring("Input", "Enter Foreign IP:")
 
-    # Setup iptables
-    iptables_commands = [
-        f"sysctl net.ipv4.ip_forward=1",
-        f"iptables -t nat -A PREROUTING -p tcp --dport 22 -j DNAT --to-destination {iranip}",
-        f"iptables -t nat -A PREROUTING -j DNAT --to-destination {kharegip}",
-        f"iptables -t nat -A POSTROUTING -j MASQUERADE",
-    ]
-    for command in iptables_commands:
-        stdin, stdout, stderr = client.exec_command(command)
-        errors = stderr.read().decode()
-        if errors:
-            log_text.insert('end', f'Error setting up iptables: {errors}\n')
-            return
-
     # Check if the file exists and create if not
     rc_local_path = "/etc/rc.local"
     stdin, stdout, stderr = client.exec_command(f'if ! test -f {rc_local_path}; then sudo touch {rc_local_path}; echo "#!/bin/sh -e" | sudo tee {rc_local_path}; echo "exit 0" | sudo tee -a {rc_local_path}; fi')
     errors = stderr.read().decode()
     if errors:
         log_text.insert('end', f'Error checking/creating /etc/rc.local: {errors}\n')
+        return
+
+    # Empty the file
+    stdin, stdout, stderr = client.exec_command(f'echo "#!/bin/sh -e" | sudo tee {rc_local_path}; echo "exit 0" | sudo tee -a {rc_local_path}')
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error emptying /etc/rc.local: {errors}\n')
         return
 
     rc_local_commands = [
@@ -263,7 +255,7 @@ def tunnel_setup(client, log_text):
         stdin, stdout, stderr = client.exec_command(f'sudo sed -i "/exit 0/i {command}" {rc_local_path}')
         errors = stderr.read().decode()
         if errors:
-            log_text.insert('end', f'Error editing rc.local: {errors}\n')
+            log_text.insert('end', f'Error adding command to rc.local: {errors}\n')
             return
 
     # Change permissions of rc.local
@@ -275,37 +267,61 @@ def tunnel_setup(client, log_text):
 
     log_text.insert('end', 'Tunnel setup successful\n')
 
-
 def setup_udpgw(client, log_text):
     # Ask the user for the UDPGW port
     udpgw_port = simpledialog.askinteger("UDPGW", "Please enter the UDPGW port:")
 
-    # Download the file
-    command = 'wget -O /usr/bin/badvpn-udpgw "https://raw.githubusercontent.com/daybreakersx/premscript/master/badvpn-udpgw64"'
+    # Kill any processes using the file
+    command = 'pkill -f /usr/bin/badvpn-udpgw'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
-    if "Saving to" not in errors:  # Check if a real error occurred
+    if errors:  # Check if a real error occurred
         log_text.insert('end', f'Error executing command "{command}": {errors}\n')
         return
+
+    # Check if the file exists
+    command = 'ls /usr/bin/badvpn-udpgw'
+    stdin, stdout, stderr = client.exec_command(command)
+    file_exists = stdout.read().decode().strip()
+
+    # If the file doesn't exist, download it
+    if not file_exists:
+        command = 'wget -O /usr/bin/badvpn-udpgw "https://raw.githubusercontent.com/daybreakersx/premscript/master/badvpn-udpgw64"'
+        stdin, stdout, stderr = client.exec_command(command)
+        errors = stderr.read().decode()
+        if "Saving to" not in errors:  # Check if a real error occurred
+            log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+            return
 
     # Wait for the file to download
     time.sleep(8)
 
+    # Create the rc.local file if it doesn't exist
+    command = 'touch /etc/rc.local'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:  # Check if a real error occurred
+        log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+        return
+
     # Create and edit the rc.local file
     rc_local_commands = [
-        f"#!/bin/sh -e",
+        "#!/bin/sh -e",
         f"screen -AmdS badvpn badvpn-udpgw --listen-addr 127.0.0.1:{udpgw_port}",
-        f"exit 0",
+        "exit 0",
     ]
-    for command in rc_local_commands:
-        stdin, stdout, stderr = client.exec_command(f'sudo bash -c "echo \'{command}\' >> /etc/rc.local"')
-        errors = stderr.read().decode()
-        if errors:
-            log_text.insert('end', f'Error executing command "{command}": {errors}\n')
-            return
+    rc_local_content = "\n".join(rc_local_commands)
+
+    # Write the content to the rc.local file
+    command = f'echo "{rc_local_content}" > /etc/rc.local'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+        return
 
     # Run the final command
-    command = f"sudo chmod +x /etc/rc.local && sudo chmod +x /usr/bin/badvpn-udpgw && systemctl daemon-reload && sleep 0.5 && systemctl start rc-local.service && screen -AmdS badvpn badvpn-udpgw --listen-addr 127.0.0.1:{udpgw_port}"
+    command = f"chmod +x /etc/rc.local && chmod +x /usr/bin/badvpn-udpgw && systemctl daemon-reload && sleep 0.5 && systemctl start rc-local.service && screen -AmdS badvpn badvpn-udpgw --listen-addr 127.0.0.1:{udpgw_port}"
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     if errors:
@@ -314,12 +330,82 @@ def setup_udpgw(client, log_text):
 
     log_text.insert('end', 'UDPGW setup successful\n')
 
+def install_nginx(client, log_text):
+    # Always assume the operating system is Debian
+    command = 'sudo DEBIAN_FRONTEND=noninteractive apt-get install nginx -y'
+
+    # Execute the installation command
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error installing nginx: {errors}\n')
+        return
+
+    log_text.insert('end', 'Nginx installation successful\n')
+
+def upload_website(client, log_text):
+    # Open a file dialog and ask the user to select a file
+    filename = tk.filedialog.askopenfilename(filetypes=[('Zip Files', '*.zip')])
+
+    if not filename:
+        log_text.insert('end', 'No file selected\n')
+        return
+
+    try:
+        # Use paramiko's SFTPClient to upload the file
+        sftp = client.open_sftp()
+        sftp.put(filename, '/var/www/html/website.zip')
+        sftp.close()
+
+        # Wait for 5 seconds
+        time.sleep(5)
+
+        # Install unzip
+        stdin, stdout, stderr = client.exec_command('sudo DEBIAN_FRONTEND=noninteractive apt-get install unzip -y')
+        errors = stderr.read().decode()
+        if errors:
+            log_text.insert('end', f'Error installing unzip: {errors}\n')
+            return
+
+        # Unzip the file
+        stdin, stdout, stderr = client.exec_command('unzip /var/www/html/website.zip -d /var/www/html/')
+        errors = stderr.read().decode()
+        if errors:
+            log_text.insert('end', f'Error unzipping file: {errors}\n')
+            return
+
+        log_text.insert('end', 'Upload and extraction successful\n')
+    except Exception as e:
+        log_text.insert('end', f'Failed to upload file: {str(e)}\n')
+
+def install_certbot_and_get_ssl(client, log_text):
+    command = 'sudo DEBIAN_FRONTEND=noninteractive apt install certbot python3-certbot-nginx -y'
+    log_text.insert(tk.END, f"Running command: {command}\n")
+    log_text.see(tk.END)
+    stdin, stdout, stderr = client.exec_command(command)
+    out = stdout.read().decode()
+    err = stderr.read().decode()
+    log_text.insert(tk.END, out)
+    log_text.insert(tk.END, err)
+    log_text.see(tk.END)
+    time.sleep(20)  # wait for 20 seconds
+
+    domain = simpledialog.askstring("Input", "Please enter your domain:")
+    command = f'sudo DEBIAN_FRONTEND=noninteractive certbot --nginx -d {domain} --register-unsafely-without-email --agree-tos'
+    log_text.insert(tk.END, f"Running command: {command}\n")
+    log_text.see(tk.END)
+    stdin, stdout, stderr = client.exec_command(command)
+    out = stdout.read().decode()
+    err = stderr.read().decode()
+    log_text.insert(tk.END, out)
+    log_text.insert(tk.END, err)
+    log_text.see(tk.END)
 
 
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_1.07.12")
+    root.title("C2C SSH V_ 1.07.14")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
@@ -383,10 +469,7 @@ def main():
     ]
 
     buttons_in_install_website = [
-        'Install Nginx',
-        'Upload Web Site',
-        'Install Certbot',
-        'Get SSL Certificate',
+
     ]
 
     buttons_in_server_management = [
@@ -394,17 +477,13 @@ def main():
     ]
 
     buttons_in_install_panel_column1 = [
-        'X-UI Orginall',
-        'Alireza',
-        'MHSanaei',
-        'Kafka',
-        'Vaxilu',
+        'Coming Soon',
+
     ]
 
     buttons_in_install_panel_column2 = [
-        'Hiddify',
-        'Dragon',
-        'X Panel',
+        'Coming Soon',
+
     ]
 
     for name in tab_names:
@@ -428,8 +507,15 @@ def main():
             for i, btn_name in enumerate(buttons_in_install_website):
                 button = ttk.Button(tab, text=btn_name, width=20) 
                 button.grid(row=i, column=0, padx=5, pady=5, sticky='w')
+            install_nginx_button = ttk.Button(tab, text='Install Nginx', width=20, command=lambda: install_nginx(client, log_text))
+            install_nginx_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
+            upload_website_button = ttk.Button(tab, text='Upload Website', width=20, command=lambda: upload_website(client, log_text)) # Set the width to 20
+            upload_website_button.grid(row=1, column=0, padx=5, pady=5, sticky='w')
+            install_certbot_button = ttk.Button(tab, text='Certbot + SSL', width=20, command=lambda: install_certbot_and_get_ssl(client, log_text))
+            install_certbot_button.grid(row=2, column=0, padx=5, pady=5, sticky='w')
+
         elif name == 'Proxy':
-            button = ttk.Button(tab, text='Start Proxy', width=20) 
+            button = ttk.Button(tab, text='Coming Soon', width=20) 
             button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
         elif name == 'Server Management':
             for i, btn_name in enumerate(buttons_in_server_management):
@@ -437,10 +523,11 @@ def main():
                 button.grid(row=i, column=0, padx=5, pady=5, sticky='w')
 
             tunnel_setup_button = ttk.Button(tab, text='Tunnel Setup', width=20, command=lambda: tunnel_setup(client, log_text))
-            tunnel_setup_button.grid(row=i+1, column=0, padx=5, pady=5, sticky='w')
+            tunnel_setup_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
             udpgw_button = ttk.Button(tab, text='UDPGW', width=20, command=lambda: setup_udpgw(client, log_text))
-            udpgw_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
-        
+            udpgw_button.grid(row=1, column=0, padx=5, pady=5, sticky='w')
+
+
         elif name == 'Install Panel':
             for i, btn_name in enumerate(buttons_in_install_panel_column1):
                 button = ttk.Button(tab, text=btn_name, width=20) 
