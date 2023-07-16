@@ -10,6 +10,7 @@ import psutil
 from tkinter import simpledialog
 from tkinter import messagebox
 from tkinter import filedialog
+import datetime
 
 def connect_to_server(ip_domain, port, username, password, log_text):
     # Create a new SSH client
@@ -57,12 +58,14 @@ def update_server_info(client, cpu_meter, ram_meter, ip4_entry, ip6_entry):
         time.sleep(1)
 
 
+def add_user(client, log_text, root):
+    username = simpledialog.askstring("Input", "Please enter your username with a special word at the beginning:", parent=root)
+    password = simpledialog.askstring("Input", "Enter password:", show='*', parent=root)
+    expiry_days = simpledialog.askinteger("Input", "Enter the number of days until expiry:", parent=root)  # Change to askinteger
+    traffic_limit = simpledialog.askstring("Input", "Enter traffic limit in GB:", parent=root)
 
-def add_user(client, log_text):
-    username = simpledialog.askstring("Input", "Enter your username starting with true copy:")
-    password = simpledialog.askstring("Input", "Enter password:", show='*')
-    expiry_date = simpledialog.askstring("Input", "Enter expiry date (YYYY-MM-DD):")
-    traffic_limit = simpledialog.askstring("Input", "Enter traffic limit in GB:")
+    # Calculate expiry date based on number of days
+    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=expiry_days)).strftime('%Y-%m-%d')
 
     # Create new user
     stdin, stdout, stderr = client.exec_command(f'sudo useradd -s /usr/sbin/nologin {username}')
@@ -121,7 +124,11 @@ def change_user_password(client, log_text):
 
     log_text.insert('end', f'Successfully changed password for user {username}\n')
 
+
 def list_users(client, log_text, root):
+    # Ask the user for the username prefix
+    username_prefix = simpledialog.askstring("Username", "Please enter the username prefix:")
+
     # Create a new window
     new_window = tk.Toplevel(root)
     new_window.geometry('900x500')
@@ -148,7 +155,7 @@ def list_users(client, log_text, root):
     user_list = stdout.read().decode().split('\n')
 
     for user in user_list:
-        if user and user.startswith('truecopy'):
+        if user and user.startswith(username_prefix):  # Use the user's input here
             # Get the user's information
             stdin, stdout, stderr = client.exec_command(f'sudo chage -l {user}')
             chage_output = stdout.read().decode()
@@ -189,6 +196,7 @@ def list_users(client, log_text, root):
             # Insert the user's information into the table
             user_table.insert("", tk.END, text=user, values=(created_date, validity_days, traffic_limit,
                                                              traffic_usage, online))
+
             
 def change_ssh_port(client, log_text):
     # Ask the user for the new SSH port
@@ -268,6 +276,21 @@ def tunnel_setup(client, log_text):
     log_text.insert('end', 'Tunnel setup successful\n')
 
 def setup_udpgw(client, log_text):
+    # Check if 'screen' package is installed
+    command = 'dpkg -s screen'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode().strip()
+    if errors:
+        # If 'screen' is not installed, install it
+        command = 'sudo apt-get install -y screen'
+        stdin, stdout, stderr = client.exec_command(command)
+        errors = stderr.read().decode().strip()
+        if errors:  # Check if a real error occurred
+            log_text.insert('end', f'Error executing command "{command}": {errors}\n')
+            return
+        else:
+            log_text.insert('end', 'Screen installed successfully\n')
+
     # Ask the user for the UDPGW port
     udpgw_port = simpledialog.askinteger("UDPGW", "Please enter the UDPGW port:")
 
@@ -401,11 +424,16 @@ def install_certbot_and_get_ssl(client, log_text):
     log_text.insert(tk.END, err)
     log_text.see(tk.END)
 
+import paramiko
+import subprocess
+from tkinter import simpledialog, messagebox
+
+
 
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_ 1.07.14")
+    root.title("C2C SSH V_ 1.07.16")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
@@ -457,7 +485,7 @@ def main():
     # Create a Notebook (tabbed widget) inside the tab_frame
     tabs = ttk.Notebook(tab_frame)
 
-    # Create 7 tabs
+    # Create 6 tabs
     tab_names = [
         'Server Monitoring',
         'Server Security',
@@ -465,7 +493,6 @@ def main():
         'Server Management',
         'Install Website',
         'Install Panel',
-        'Proxy',
     ]
 
     buttons_in_install_website = [
@@ -489,7 +516,7 @@ def main():
     for name in tab_names:
         tab = ttk.Frame(tabs)  
         if name == 'User Management':
-            add_user_button = ttk.Button(tab, text='Add user', width=20, command=lambda: add_user(client, log_text)) 
+            add_user_button = ttk.Button(tab, text='Add user', width=20, command=lambda: add_user(client, log_text, root))  
             add_user_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
             delete_user_button = ttk.Button(tab, text='Delete user', width=20, command=lambda: delete_user(client, log_text)) 
             delete_user_button.grid(row=1, column=0, padx=5, pady=5, sticky='w')
@@ -514,9 +541,7 @@ def main():
             install_certbot_button = ttk.Button(tab, text='Certbot + SSL', width=20, command=lambda: install_certbot_and_get_ssl(client, log_text))
             install_certbot_button.grid(row=2, column=0, padx=5, pady=5, sticky='w')
 
-        elif name == 'Proxy':
-            button = ttk.Button(tab, text='Coming Soon', width=20) 
-            button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
+
         elif name == 'Server Management':
             for i, btn_name in enumerate(buttons_in_server_management):
                 button = ttk.Button(tab, text=btn_name, width=20) 
