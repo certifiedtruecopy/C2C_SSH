@@ -60,9 +60,16 @@ def update_server_info(client, cpu_meter, ram_meter, ip4_entry, ip6_entry):
 
 def add_user(client, log_text, root):
     username = simpledialog.askstring("Input", "Please enter your username with a special word at the beginning:", parent=root)
+    if username is None: return
     password = simpledialog.askstring("Input", "Enter password:", show='*', parent=root)
+    if password is None: return
     expiry_days = simpledialog.askinteger("Input", "Enter the number of days until expiry:", parent=root)  # Change to askinteger
-    traffic_limit = simpledialog.askstring("Input", "Enter traffic limit in GB:", parent=root)
+    if expiry_days is None: return
+    traffic_limit = simpledialog.askinteger("Input", "Enter traffic limit in GB:", parent=root)
+    if traffic_limit is None: return
+    if traffic_limit == 0:
+        log_text.insert('end', 'Invalid traffic limit!\n')
+        return
 
     # Calculate expiry date based on number of days
     expiry_date = (datetime.datetime.now() + datetime.timedelta(days=expiry_days)).strftime('%Y-%m-%d')
@@ -101,6 +108,7 @@ def add_user(client, log_text, root):
 
 def delete_user(client, log_text):
     username = simpledialog.askstring("Input", "Enter username to delete:")
+    if username is None: return
 
     # Delete user
     stdin, stdout, stderr = client.exec_command(f'sudo userdel {username}')
@@ -113,7 +121,9 @@ def delete_user(client, log_text):
 
 def change_user_password(client, log_text):
     username = simpledialog.askstring("Input", "Enter username:")
+    if username is None: return
     new_password = simpledialog.askstring("Input", "Enter new password:", show='*')
+    if new_password is None: return
 
     # Change user password
     stdin, stdout, stderr = client.exec_command(f'echo "{username}:{new_password}" | sudo chpasswd')
@@ -147,7 +157,7 @@ def list_users(client, log_text, root):
     user_table.heading("expires", text="Expiry Date")
     user_table.heading("traffic_limit", text="Amount of Traffic")
     user_table.heading("traffic_used", text="Traffic Used")
-    user_table.heading("online", text="Online")
+    user_table.heading("online", text="Online User")
     user_table.pack(fill='both', expand=True)
 
     # Get the list of users
@@ -188,10 +198,11 @@ def list_users(client, log_text, root):
                     traffic_usage = parts[1]
 
             # Check if the user is online
-            stdin, stdout, stderr = client.exec_command(f'w -h {user}')
+            stdin, stdout, stderr = client.exec_command(f'ps aux | grep "sshd: {user}" | awk "!/priv/" | grep -v grep | wc -l')
             w_output = stdout.read().decode()
             if w_output:
-                online = "Yes"
+                online = w_output.strip()
+
 
             # Insert the user's information into the table
             user_table.insert("", tk.END, text=user, values=(created_date, validity_days, traffic_limit,
@@ -201,6 +212,7 @@ def list_users(client, log_text, root):
 def change_ssh_port(client, log_text):
     # Ask the user for the new SSH port
     new_ssh_port = simpledialog.askinteger("Change SSH Port", "Please enter the new SSH port:")
+    if new_ssh_port is None: return
 
     if messagebox.askyesno("Warning", "Changing the SSH port will remove any user restrictions. Do you want to continue?"):
         # Create a temporary copy of the sshd_config file
@@ -234,7 +246,9 @@ def tunnel_setup(client, log_text):
 
     # Get IPs
     iranip = simpledialog.askstring("Input", "Enter Iran IP:")
+    if iranip is None: return
     kharegip = simpledialog.askstring("Input", "Enter Foreign IP:")
+    if kharegip is None: return
 
     # Check if the file exists and create if not
     rc_local_path = "/etc/rc.local"
@@ -293,6 +307,7 @@ def setup_udpgw(client, log_text):
 
     # Ask the user for the UDPGW port
     udpgw_port = simpledialog.askinteger("UDPGW", "Please enter the UDPGW port:")
+    if udpgw_port is None: return
 
     # Kill any processes using the file
     command = 'pkill -f /usr/bin/badvpn-udpgw'
@@ -414,6 +429,7 @@ def install_certbot_and_get_ssl(client, log_text):
     time.sleep(20)  # wait for 20 seconds
 
     domain = simpledialog.askstring("Input", "Please enter your domain:")
+    if domain is None: return
     command = f'sudo DEBIAN_FRONTEND=noninteractive certbot --nginx -d {domain} --register-unsafely-without-email --agree-tos'
     log_text.insert(tk.END, f"Running command: {command}\n")
     log_text.see(tk.END)
@@ -424,16 +440,43 @@ def install_certbot_and_get_ssl(client, log_text):
     log_text.insert(tk.END, err)
     log_text.see(tk.END)
 
-import paramiko
-import subprocess
-from tkinter import simpledialog, messagebox
+def block_domains(client, log_text):
+    # Open a file dialog and ask the user to select a file
+    filename = tk.filedialog.askopenfilename(filetypes=[('Text Files', '*.txt')])
 
+    if not filename:
+        log_text.insert('end', 'No file selected\n')
+        return
+
+    try:
+        # Open the file and read the domains
+        with open(filename, 'r') as file:
+            domains = file.read().split('\n')
+
+        # Use paramiko's SFTPClient to upload the file
+        sftp = client.open_sftp()
+        sftp.put(filename, '/tmp/domains.txt')
+        sftp.close()
+
+        # Block each domain
+        for domain in domains:
+            if domain:  # Make sure the domain is not an empty string
+                command = f'sudo iptables -A INPUT -s {domain} -j DROP'
+                stdin, stdout, stderr = client.exec_command(command)
+                errors = stderr.read().decode()
+                if errors:
+                    log_text.insert('end', f'Failed to block domain {domain}: {errors}\n')
+                else:
+                    log_text.insert('end', f'Successfully blocked domain {domain}\n')
+
+    except Exception as e:
+        log_text.insert('end', f'Failed to block domains: {str(e)}\n')
 
 
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_ 1.07.16")
+    root.title("C2C SSH V_ 1.07.25")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
@@ -551,6 +594,9 @@ def main():
             tunnel_setup_button.grid(row=0, column=0, padx=5, pady=5, sticky='w')
             udpgw_button = ttk.Button(tab, text='UDPGW', width=20, command=lambda: setup_udpgw(client, log_text))
             udpgw_button.grid(row=1, column=0, padx=5, pady=5, sticky='w')
+            block_domains_button = ttk.Button(tab, text='Block Domains', width=20, command=lambda: block_domains(client, log_text))
+            block_domains_button.grid(row=3, column=0, padx=5, pady=5, sticky='w')
+
 
 
         elif name == 'Install Panel':
