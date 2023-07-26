@@ -2,7 +2,7 @@
 
 users=()
 max_conns=()
-block_minutes=10
+block_minutes=5
 
 while IFS=, read -r user max_conn; do
     users+=("$user")
@@ -25,10 +25,12 @@ while true; do
             echo "$user has too many connections ($connections), blocking for $block_minutes minutes"
             iptables -I INPUT -p tcp --dport 22 -s $user_ip -j REJECT
             
-            sleep $((block_minutes * 60))
-            
-            iptables -D INPUT -p tcp --dport 22 -s $user_ip -j REJECT
+            # Run the unblocking process in the background
+            (
+                sleep $((block_minutes * 60))
+                iptables -D INPUT -p tcp --dport 22 -s $user_ip -j REJECT
+            ) &
         fi
     done
-    sleep 60
+    sleep 30
 done
