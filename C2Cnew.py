@@ -11,6 +11,10 @@ from tkinter import simpledialog
 from tkinter import messagebox
 from tkinter import filedialog
 import datetime
+import subprocess
+import threading
+
+
 
 def connect_to_server(ip_domain, port, username, password, log_text):
     # Create a new SSH client
@@ -70,6 +74,8 @@ def add_user(client, log_text, root):
     if traffic_limit == 0:
         log_text.insert('end', 'Invalid traffic limit!\n')
         return
+    max_connections = simpledialog.askinteger("Input", "Enter the maximum number of concurrent connections:", parent=root)
+    if max_connections is None: return 
 
     # Calculate expiry date based on number of days
     expiry_date = (datetime.datetime.now() + datetime.timedelta(days=expiry_days)).strftime('%Y-%m-%d')
@@ -103,7 +109,24 @@ def add_user(client, log_text, root):
         log_text.insert('end', f'Error setting user traffic limit: {errors}\n')
         return
 
+    # Check if users.csv exists and create if not
+    stdin, stdout, stderr = client.exec_command('if [ ! -f /var/log/users.csv ]; then echo "user,max_conn" | sudo tee /var/log/users.csv; fi')
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error creating users.csv file: {errors}\n')
+        return
+
+    # Update users.csv file
+    command = f'echo "{username},{max_connections}" | sudo tee -a /var/log/users.csv'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error updating users.csv file: {errors}\n')
+        return
+
     log_text.insert('end', f'Successfully created user {username}\n')
+
+
 
 
 def delete_user(client, log_text):
@@ -473,10 +496,38 @@ def block_domains(client, log_text):
         log_text.insert('end', f'Failed to block domains: {str(e)}\n')
 
 
+def activate_your_limit(client, log_text):
+
+    command = 'sudo wget -O /var/log/UserLimit.sh https://github.com/certifiedtruecopy/C2C_SSH/raw/main/UserLimit.sh'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    time.sleep(5)
+    
+    # Change the mode of the script to executable
+    command = 'sudo chmod +x /var/log/UserLimit.sh'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error changing script mode: {errors}\n')
+        return
+
+    # Execute the script
+    time.sleep(5)
+    command = 'nohup sudo bash /var/log/UserLimit.sh > /dev/null 2>&1 &'
+    stdin, stdout, stderr = client.exec_command(command)
+    errors = stderr.read().decode()
+    if errors:
+        log_text.insert('end', f'Error executing script: {errors}\n')
+        return
+
+    log_text.insert('end', 'UserLimit.sh executed successfully\n')
+
+
+
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_ 1.07.25")
+    root.title("C2C SSH V_ 1.07.26")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
@@ -506,6 +557,9 @@ def main():
         input = ttk.Entry(login_frame, width=20)
         input.grid(row=i, column=1, padx=5, pady=5)
         inputs.append(input)
+
+    client = None  # Initialize client
+    log_text = tk.Text(root)  # Initialize log_text with a Text widget
 
     # Create a connect button inside the login_frame
     connect_button = ttk.Button(
@@ -596,6 +650,10 @@ def main():
             udpgw_button.grid(row=1, column=0, padx=5, pady=5, sticky='w')
             block_domains_button = ttk.Button(tab, text='Block Domains', width=20, command=lambda: block_domains(client, log_text))
             block_domains_button.grid(row=3, column=0, padx=5, pady=5, sticky='w')
+            activate_your_limit_button = ttk.Button(tab, text='Active user limit', width=20, command=lambda: activate_your_limit(client, log_text))
+            activate_your_limit_button.grid(row=4, column=0, padx=5, pady=5, sticky='w')
+
+
 
 
 
