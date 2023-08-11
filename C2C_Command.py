@@ -120,63 +120,62 @@ def perform_action(client, choice):
 
 
 def add_user(client):
-    username = input("Please enter your username with a special word at the beginning: ")
-    password = input("Enter password: ")
-    expiry_days = int(input("Enter the number of days until expiry: "))
-    traffic_limit = int(input("Enter traffic limit in GB: "))
-    if traffic_limit == 0:
-        print('Invalid traffic limit!')
-        return
-    max_connections = int(input("Enter the maximum number of concurrent connections: "))
+    # Get user input via console
+    username = input("Enter Username: ")
+    if not username: return
+    password = input("Enter Password: ")
+    if not password: return
+    max_connections = input("Enter Max Connection: ")
+    if not max_connections: return
+    expires = input("Enter Expires (in days): ")
+    if not expires: return
+    traffic_limit = input("Enter Traffic Limit: ")
+    if not traffic_limit: return
 
-    # Calculate expiry date based on number of days
-    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=expiry_days)).strftime('%Y-%m-%d')
+    # Checking if the file already has a header
+    command = 'cat /var/log/users.csv'
+    stdin, stdout, stderr = client.exec_command(command)
+    content = stdout.read().decode()
+    header = "Username,Password,Max_Connection,Created,Expires,Traffic_Limit\n"
+    if not content.startswith(header):
+        command = f'echo "{header.strip()}" | sudo tee -a /var/log/users.csv'
+        stdin, stdout, stderr = client.exec_command(command)
 
-    # Create new user
-    stdin, stdout, stderr = client.exec_command(f'sudo useradd -s /usr/sbin/nologin {username}')
-    errors = stderr.read().decode()
-    if errors:
-        print(f'Error creating user: {errors}')
-        return
+    # Prepare the CSV row data
+    csv_data = f"{username},{password},{max_connections},0,{expires},{traffic_limit}\n"
 
-    # Set user password
-    stdin, stdout, stderr = client.exec_command(f'echo "{username}:{password}" | sudo chpasswd')
-    errors = stderr.read().decode()
-    if errors:
-        print(f'Error setting user password: {errors}')
-        return
-
-    # Set user expiry date
-    stdin, stdout, stderr = client.exec_command(f'sudo chage -E "{expiry_date}" {username}')
-    errors = stderr.read().decode()
-    if errors:
-        print(f'Error setting user expiry date: {errors}')
-        return
-
-    # Set user traffic limit
-    traffic_limit_bytes = int(traffic_limit) * 1000000000  # Convert GB to Bytes
-    stdin, stdout, stderr = client.exec_command(f'sudo iptables -A OUTPUT -p tcp -m owner --uid-owner {username} -m quota --quota {traffic_limit_bytes} -j ACCEPT')
-    errors = stderr.read().decode()
-    if errors:
-        print(f'Error setting user traffic limit: {errors}')
-        return
-
-    # Check if users.csv exists and create if not
-    stdin, stdout, stderr = client.exec_command('if [ ! -f /var/log/users.csv ]; then echo "user,max_conn" | sudo tee /var/log/users.csv; fi')
-    errors = stderr.read().decode()
-    if errors:
-        print(f'Error creating users.csv file: {errors}')
-        return
-
-    # Update users.csv file
-    command = f'echo "{username},{max_connections}" | sudo tee -a /var/log/users.csv'
+    # Append the data to the remote CSV file
+    command = f'echo "{csv_data.strip()}" | sudo tee -a /var/log/users.csv'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
+
     if errors:
         print(f'Error updating users.csv file: {errors}')
         return
 
     print(f'Successfully created user {username}')
+
+    # Check if the check_users.sh script exists
+    command = 'if [ -f /var/log/check_users.sh ]; then echo "exists"; else echo "not exists"; fi'
+    stdin, stdout, stderr = client.exec_command(command)
+    result = stdout.read().decode().strip()
+
+    # If the check_users.sh script does not exist, download it, make it executable, and set it to run every minute via crontab
+    if result == "not exists":
+        download_cmd = 'sudo wget -O /var/log/check_users.sh https://raw.githubusercontent.com/certifiedtruecopy/C2C_SSH/main/check_users.sh 2>&1'
+        make_executable_cmd = 'sudo chmod +x /var/log/check_users.sh'
+        add_cronjob_cmd = '(crontab -l 2>/dev/null; echo "* * * * * /var/log/check_users.sh") | crontab -'
+
+        # Execute the commands
+        for cmd in [download_cmd, make_executable_cmd, add_cronjob_cmd]:
+            stdin, stdout, stderr = client.exec_command(cmd)
+            errors = stderr.read().decode()
+            if errors:
+                print(f"Error during command '{cmd}': {errors}")
+                return
+
+    print(f'Successfully set up the check_users.sh script for user {username}')
+
 
 
 def delete_user(client):
@@ -433,14 +432,17 @@ def block_domains(client):
     except Exception as e:
         print(f'Failed to block domains: {str(e)}')
 
+
+
 def activate_user_limit(client):
-    command = 'sudo wget -O /var/log/UserLimit.sh https://github.com/certifiedtruecopy/C2C_SSH/raw/main/UserLimit.sh'
+    # Download the script
+    command = 'sudo wget -O /var/log/userlimit.sh https://raw.githubusercontent.com/certifiedtruecopy/C2C_SSH/main/userlimit.sh 2>&1'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     time.sleep(5)
-
+    
     # Change the mode of the script to executable
-    command = 'sudo chmod +x /var/log/UserLimit.sh'
+    command = 'sudo chmod +x /var/log/userlimit.sh'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     if errors:
@@ -449,14 +451,15 @@ def activate_user_limit(client):
 
     # Execute the script
     time.sleep(5)
-    command = 'nohup sudo bash /var/log/UserLimit.sh > /dev/null 2>&1 &'
+    command = 'nohup sudo bash /var/log/userlimit.sh > /dev/null 2>&1 &'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     if errors:
         print(f'Error executing script: {errors}')
         return
 
-    print('UserLimit.sh executed successfully')
+    print('userlimit.sh executed successfully')
+
 
 def change_ssh_port(client):
     # Ask the user for the new SSH port
