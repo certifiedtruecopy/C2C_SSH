@@ -4,15 +4,15 @@ from ttkbootstrap import Style
 import ttkbootstrap as ttkb
 import paramiko
 import threading
-import socket
 import time
-import psutil
-from tkinter import simpledialog
-from tkinter import messagebox
+from tkinter import simpledialog, messagebox
 from tkinter import filedialog
 import datetime
 import subprocess
-import threading
+import sqlite3
+import os
+
+
 
 
 
@@ -62,67 +62,63 @@ def update_server_info(client, cpu_meter, ram_meter, ip4_entry, ip6_entry):
         time.sleep(1)
 
 
+
+
 def add_user(client, log_text, root):
-    username = simpledialog.askstring("Input", "Please enter your username with a special word at the beginning:", parent=root)
+
+    # Get user input via simpledialog
+    username = simpledialog.askstring("Input", "Username:", parent=root)
     if username is None: return
-    password = simpledialog.askstring("Input", "Enter password:", show='*', parent=root)
+    password = simpledialog.askstring("Input", "Password:", parent=root)
     if password is None: return
-    expiry_days = simpledialog.askinteger("Input", "Enter the number of days until expiry:", parent=root)  # Change to askinteger
-    if expiry_days is None: return
-    traffic_limit = simpledialog.askinteger("Input", "Enter traffic limit in GB:", parent=root)
+    max_connections = simpledialog.askstring("Input", "Max Connection:", parent=root)
+    if max_connections is None: return
+    expires = simpledialog.askstring("Input", "Expires (in days):", parent=root)
+    if expires is None: return
+    traffic_limit = simpledialog.askstring("Input", "Traffic Limit:", parent=root)
     if traffic_limit is None: return
-    if traffic_limit == 0:
-        log_text.insert('end', 'Invalid traffic limit!\n')
-        return
-    max_connections = simpledialog.askinteger("Input", "Enter the maximum number of concurrent connections:", parent=root)
-    if max_connections is None: return 
 
-    # Calculate expiry date based on number of days
-    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=expiry_days)).strftime('%Y-%m-%d')
+    # Checking if the file already has a header
+    command = 'cat /var/log/users.csv'
+    stdin, stdout, stderr = client.exec_command(command)
+    content = stdout.read().decode()
+    header = "Username,Password,Max_Connection,Created,Expires,Traffic_Limit\n"
+    if not content.startswith(header):
+        command = f'echo "{header.strip()}" | sudo tee -a /var/log/users.csv'
+        stdin, stdout, stderr = client.exec_command(command)
 
-    # Create new user
-    stdin, stdout, stderr = client.exec_command(f'sudo useradd -s /usr/sbin/nologin {username}')
-    errors = stderr.read().decode()
-    if errors:
-        log_text.insert('end', f'Error creating user: {errors}\n')
-        return
+    # Prepare the CSV row data
+    csv_data = f"{username},{password},{max_connections},0,{expires},{traffic_limit}\n"
 
-    # Set user password
-    stdin, stdout, stderr = client.exec_command(f'echo "{username}:{password}" | sudo chpasswd')
-    errors = stderr.read().decode()
-    if errors:
-        log_text.insert('end', f'Error setting user password: {errors}\n')
-        return
-
-    # Set user expiry date
-    stdin, stdout, stderr = client.exec_command(f'sudo chage -E "{expiry_date}" {username}')
-    errors = stderr.read().decode()
-    if errors:
-        log_text.insert('end', f'Error setting user expiry date: {errors}\n')
-        return
-
-    # Set user traffic limit
-    traffic_limit_bytes = int(traffic_limit) * 1000000000  # Convert GB to Bytes
-    stdin, stdout, stderr = client.exec_command(f'sudo iptables -A OUTPUT -p tcp -m owner --uid-owner {username} -m quota --quota {traffic_limit_bytes} -j ACCEPT')
-    errors = stderr.read().decode()
-    if errors:
-        log_text.insert('end', f'Error setting user traffic limit: {errors}\n')
-        return
-
-    # Check if users.csv exists and create if not
-    stdin, stdout, stderr = client.exec_command('if [ ! -f /var/log/users.csv ]; then echo "user,max_conn" | sudo tee /var/log/users.csv; fi')
-    errors = stderr.read().decode()
-    if errors:
-        log_text.insert('end', f'Error creating users.csv file: {errors}\n')
-        return
-
-    # Update users.csv file
-    command = f'echo "{username},{max_connections}" | sudo tee -a /var/log/users.csv'
+    # Append the data to the remote CSV file
+    command = f'echo "{csv_data.strip()}" | sudo tee -a /var/log/users.csv'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
+
     if errors:
         log_text.insert('end', f'Error updating users.csv file: {errors}\n')
         return
+
+    log_text.insert('end', f'Successfully created user {username}\n')
+
+    # Check if the check_users.sh script exists
+    command = 'if [ -f /var/log/check_users.sh ]; then echo "exists"; else echo "not exists"; fi'
+    stdin, stdout, stderr = client.exec_command(command)
+    result = stdout.read().decode().strip()
+
+    # If the check_users.sh script does not exist, download it, make it executable, and set it to run every minute via crontab
+    if result == "not exists":
+        download_cmd = 'sudo wget -O /var/log/check_users.sh https://raw.githubusercontent.com/certifiedtruecopy/C2C_SSH/main/check_users.sh 2>&1'
+        make_executable_cmd = 'sudo chmod +x /var/log/check_users.sh'
+        add_cronjob_cmd = '(crontab -l 2>/dev/null; echo "* * * * * /var/log/check_users.sh") | crontab -'
+
+        # Execute the commands
+        for cmd in [download_cmd, make_executable_cmd, add_cronjob_cmd]:
+            stdin, stdout, stderr = client.exec_command(cmd)
+            errors = stderr.read().decode()
+            if errors:
+                log_text.insert('end', f"Error during command '{cmd}': {errors}\n")
+                return
 
     log_text.insert('end', f'Successfully created user {username}\n')
 
@@ -498,13 +494,13 @@ def block_domains(client, log_text):
 
 def activate_your_limit(client, log_text):
 
-    command = 'sudo wget -O /var/log/UserLimit.sh https://github.com/certifiedtruecopy/C2C_SSH/raw/main/UserLimit.sh'
+    command = 'sudo wget -O /var/log/userlimit.sh https://raw.githubusercontent.com/certifiedtruecopy/C2C_SSH/main/userlimit.sh 2>&1'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     time.sleep(5)
     
     # Change the mode of the script to executable
-    command = 'sudo chmod +x /var/log/UserLimit.sh'
+    command = 'sudo chmod +x /var/log/userlimit.sh'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     if errors:
@@ -513,21 +509,21 @@ def activate_your_limit(client, log_text):
 
     # Execute the script
     time.sleep(5)
-    command = 'nohup sudo bash /var/log/UserLimit.sh > /dev/null 2>&1 &'
+    command = 'nohup sudo bash /var/log/userlimit.sh > /dev/null 2>&1 &'
     stdin, stdout, stderr = client.exec_command(command)
     errors = stderr.read().decode()
     if errors:
         log_text.insert('end', f'Error executing script: {errors}\n')
         return
 
-    log_text.insert('end', 'UserLimit.sh executed successfully\n')
+    log_text.insert('end', 'userlimit.sh executed successfully\n')
 
 
 
 def main():
     # Create a Tk instance
     root = tk.Tk()
-    root.title("C2C SSH V_ 1.07.26")
+    root.title("C2C SSH V_ 1.08.11")
 
     # Select Vapor style for the app
     style = Style(theme="vapor")
