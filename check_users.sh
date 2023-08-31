@@ -23,7 +23,7 @@ while IFS= read -r user; do
             expires_date=$(date -d "+$expires days" +%Y-%m-%d)
             sudo chage -E "$expires_date" $username
             traffic_limit_bytes=$((traffic_limit * 1000000000))  # Convert GB to Bytes
-            sudo iptables -A INPUT -p tcp -m owner --uid-owner $username -m quota --quota $traffic_limit_bytes -j ACCEPT
+            sudo iptables -A OUTPUT -p tcp -m owner --uid-owner $username -m quota --quota $traffic_limit_bytes -j ACCEPT
         fi
     fi
 done <<< "$users_list"
