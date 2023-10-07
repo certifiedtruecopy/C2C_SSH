@@ -1,5 +1,4 @@
 
-![Logo](https://avatars.githubusercontent.com/u/117518627?v=4)
 
 
 
